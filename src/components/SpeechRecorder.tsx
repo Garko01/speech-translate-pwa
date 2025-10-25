@@ -1,100 +1,99 @@
 "use client";
-
-import { useEffect, useState } from "react";
+import React, { useState, useRef } from "react";
 
 export default function SpeechRecorder() {
-  const [isListening, setIsListening] = useState(false);
-  const [transcript, setTranscript] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [recognition, setRecognition] = useState<any>(null);
+  const [listening, setListening] = useState(false);
+  const [text, setText] = useState("");
+  const [translated, setTranslated] = useState("");
+  const [sourceLang, setSourceLang] = useState("en-US");
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
 
-  useEffect(() => {
-    // ✅ prevent SSR issues
-    if (typeof window === "undefined") return;
+  const LT_API = "https://libretranslate.de/translate";
 
-    const SpeechRecognition =
-      (window as any).SpeechRecognition ||
-      (window as any).webkitSpeechRecognition;
-
-    if (!SpeechRecognition) {
-      setError(
-        "⚠️ SpeechRecognition API not supported in this browser. Try Chrome or Edge."
-      );
+  const toggleListening = async () => {
+    // Check API availability
+    if (
+      !("webkitSpeechRecognition" in window) &&
+      !("SpeechRecognition" in window)
+    ) {
+      alert("Speech recognition not supported in this browser.");
       return;
     }
 
-    const recog = new SpeechRecognition();
-    recog.lang = "en-US";
-    recog.continuous = false;      // stop after a pause
-    recog.interimResults = true;   // show partial text
-    recog.maxAlternatives = 1;
+    if (listening) {
+      recognitionRef.current?.stop();
+      setListening(false);
+    } else {
+      const SpeechRecognitionClass =
+        (window as any).SpeechRecognition ||
+        (window as any).webkitSpeechRecognition;
+      const recognition: SpeechRecognition = new SpeechRecognitionClass();
 
-    recog.onresult = (event: any) => {
-      let text = "";
-      for (let i = event.resultIndex; i < event.results.length; ++i) {
-        text += event.results[i][0].transcript;
-      }
-      setTranscript(text.trim());
-    };
+      recognition.lang = sourceLang;
+      recognition.continuous = false;
+      recognition.interimResults = false;
 
-    recog.onerror = (event: any) => {
-      console.error(event);
-      setError(event.error || "Speech recognition error");
-    };
+      recognition.onresult = async (event: SpeechRecognitionEvent) => {
+        const result = event.results[0][0].transcript;
+        setText(result);
 
-    recog.onend = () => setIsListening(false);
+        const targetLang = sourceLang === "en-US" ? "zh" : "en";
+        try {
+          const response = await fetch(LT_API, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              q: result,
+              source: sourceLang === "en-US" ? "en" : "zh",
+              target: targetLang,
+              format: "text",
+            }),
+          });
+          const data = await response.json();
+          setTranslated(data.translatedText || "[Translation failed]");
+        } catch (err) {
+          console.error("LibreTranslate error:", err);
+          setTranslated("[Translation error]");
+        }
+      };
 
-    setRecognition(recog);
-  }, []);
+      recognition.onerror = (event: SpeechRecognitionErrorEvent) =>
+        console.error("Recognition error:", event.error);
 
-  const startListening = () => {
-    if (!recognition) {
-      setError("SpeechRecognition not initialized.");
-      return;
+      recognition.onend = () => setListening(false);
+
+      recognitionRef.current = recognition;
+      recognition.start();
+      setListening(true);
     }
-    setTranscript("");
-    setError(null);
-    recognition.start(); // must be called from a user gesture
-    setIsListening(true);
   };
-
-  const stopListening = () => {
-    recognition?.stop();
-    setIsListening(false);
-  };
-
-  // ✅ visible fallback so the page never looks blank
-  if (error && !isListening && !transcript) {
-    return (
-      <div className="flex flex-col items-center gap-3 mt-10">
-        <button
-          onClick={startListening}
-          className="px-6 py-3 rounded-full font-semibold text-white bg-blue-600 hover:bg-blue-700"
-          disabled
-        >
-          Start Listening
-        </button>
-        <p className="text-red-400 text-center max-w-xs">{error}</p>
-      </div>
-    );
-  }
 
   return (
-    <div className="flex flex-col items-center gap-4 mt-10">
+    <div className="flex flex-col items-center justify-center space-y-4 text-center">
+      <select
+        className="p-2 rounded text-black"
+        value={sourceLang}
+        onChange={(e) => setSourceLang(e.target.value)}
+      >
+        <option value="en-US">English → Mandarin</option>
+        <option value="zh-CN">Mandarin → English</option>
+      </select>
+
       <button
-        onClick={isListening ? stopListening : startListening}
-        className={`px-6 py-3 rounded-full font-semibold text-white transition ${
-          isListening ? "bg-red-600 animate-pulse" : "bg-blue-600 hover:bg-blue-700"
+        onClick={toggleListening}
+        className={`px-6 py-3 rounded-full font-semibold transition ${
+          listening ? "bg-red-500" : "bg-blue-600"
         }`}
       >
-        {isListening ? "Stop Listening" : "Start Listening"}
+        {listening ? "Stop Listening" : "Start Listening"}
       </button>
 
-      {error && <p className="text-red-500 text-sm text-center">{error}</p>}
-
-      {transcript && (
-        <div className="bg-gray-800 text-white p-4 rounded-lg w-80 shadow">
-          <p className="text-sm whitespace-pre-wrap">{transcript}</p>
+      {text && (
+        <div className="bg-gray-800 p-4 rounded w-80 mt-2 text-left">
+          <p><strong>🎙 Recognized:</strong> {text}</p>
+          {translated && (
+            <p className="mt-2"><strong>🌐 Translated:</strong> {translated}</p>
+          )}
         </div>
       )}
     </div>
