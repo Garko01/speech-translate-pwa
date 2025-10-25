@@ -7,11 +7,9 @@ export default function SpeechRecorder() {
   const [translated, setTranslated] = useState("");
   const [sourceLang, setSourceLang] = useState("en-US");
   const recognitionRef = useRef<SpeechRecognition | null>(null);
-
   const LT_API = "https://libretranslate.de/translate";
 
   const toggleListening = async () => {
-    // Check API availability
     if (
       !("webkitSpeechRecognition" in window) &&
       !("SpeechRecognition" in window)
@@ -30,30 +28,45 @@ export default function SpeechRecorder() {
       const recognition: SpeechRecognition = new SpeechRecognitionClass();
 
       recognition.lang = sourceLang;
-      recognition.continuous = false;
-      recognition.interimResults = false;
+      recognition.continuous = true; // ✅ enables live streaming
+      recognition.interimResults = true; // ✅ show partial results
 
       recognition.onresult = async (event: SpeechRecognitionEvent) => {
-        const result = event.results[0][0].transcript;
-        setText(result);
+        let interimText = "";
+        let finalText = "";
 
-        const targetLang = sourceLang === "en-US" ? "zh" : "en";
-        try {
-          const response = await fetch(LT_API, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              q: result,
-              source: sourceLang === "en-US" ? "en" : "zh",
-              target: targetLang,
-              format: "text",
-            }),
-          });
-          const data = await response.json();
-          setTranslated(data.translatedText || "[Translation failed]");
-        } catch (err) {
-          console.error("LibreTranslate error:", err);
-          setTranslated("[Translation error]");
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          const transcript = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            finalText += transcript + " ";
+          } else {
+            interimText += transcript;
+          }
+        }
+
+        // Combine interim + final
+        setText(finalText + interimText);
+
+        // Only translate finalized speech
+        if (finalText.trim() !== "") {
+          const targetLang = sourceLang === "en-US" ? "zh" : "en";
+          try {
+            const response = await fetch(LT_API, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                q: finalText.trim(),
+                source: sourceLang === "en-US" ? "en" : "zh",
+                target: targetLang,
+                format: "text",
+              }),
+            });
+            const data = await response.json();
+            setTranslated(data.translatedText || "[Translation failed]");
+          } catch (err) {
+            console.error("LibreTranslate error:", err);
+            setTranslated("[Translation error]");
+          }
         }
       };
 
@@ -88,12 +101,13 @@ export default function SpeechRecorder() {
         {listening ? "Stop Listening" : "Start Listening"}
       </button>
 
-      {text && (
-        <div className="bg-gray-800 p-4 rounded w-80 mt-2 text-left">
-          <p><strong>🎙 Recognized:</strong> {text}</p>
-          {translated && (
-            <p className="mt-2"><strong>🌐 Translated:</strong> {translated}</p>
-          )}
+      <div className="bg-gray-800 p-4 rounded w-80 mt-2 text-left min-h-[6rem]">
+        <p><strong>🎙 Live:</strong> {text || "Listening..."}</p>
+      </div>
+
+      {translated && (
+        <div className="bg-gray-700 p-4 rounded w-80 text-left">
+          <p><strong>🌐 Translated:</strong> {translated}</p>
         </div>
       )}
     </div>
